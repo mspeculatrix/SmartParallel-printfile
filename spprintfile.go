@@ -168,9 +168,10 @@ func main() {
 	timedOut := false
 	lineCount := 0
 	// If a timeout happens, while waiting for CTS to go low, sending of lines
-	// will stop, so that's a fail condition. The main loop below will continue,
-	// but silently, without ouput. That's okay because, although it takes time,
-	// this is not a performance-critical program.
+	// will stop, so that's a fail condition. The outside loop below will
+	// continue, but silently, without ouput. That's okay because, although it
+	// takes time, it's a very small amount of time and this is not a
+	// performance-critical program.
 	for _, line := range lines {
 		for !timedOut {
 			if ctsPin.Read() == rpio.Low {
