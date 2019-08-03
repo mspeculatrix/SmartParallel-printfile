@@ -1,0 +1,12 @@
+>========!=========!=========!=========!=========!=========!=========!=========<
+TEST.TXT - text for SmartParallel programs
+>========!=========!=========!=========!=========!=========!=========!=========<
+This line is exactly 80 characters long, up to the exclamation mark -----------!
+This line is somewhat more than 80 characters, in fact it's 100 at the exclamation mark ----------!
+ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345789@#$%^&*()_+{}[]<>.!
+ < A deliberate space at the beginning of the line.
+>========!=========!=========!=========!=========!=========!=========!=========<
+A long paragraph. This is intended to test how the program splits on spaces between words. The paragraph is more than 264 characters long - ie, longer than two 132-column lines, as 132 is the longest line the Epson MX-80 F/T III printer can accommodate. The program offers options to split on spaces or not. In the latter case, it will simply split at the number of columns specified - 80 by default and 40 or 132 as options, the first being 'double' mode and the second 'condensed' mode on the Epson.
+>========!=========!=========!=========!=========!=========!=========!=========<
+Thisisalinethatislongerthan80charactersbutcontainsnospacesthattheprogramcouldusetosplitit.In80columnmode,itshouldbreakafterthefirstappearanceoftheword'use'.
+[ENDS]
