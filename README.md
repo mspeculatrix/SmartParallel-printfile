@@ -26,4 +26,4 @@ Split long lines (default). Normally, any lines longer that the number of column
 
 **-t=\<bool>**
 
-Truncate lines instead of splitting/wrapping them. The default is not to truncate. [NOT IMPLEMENTED YET]
+Truncate lines instead of splitting/wrapping them. The default is not to truncate.
