@@ -28,6 +28,9 @@ Other flags:
 		the text will simply be split at the defined number of columns.
 		This latter behaviour can be enforced with:
 			-s=false
+	-t=<bool>
+		Truncate lines instead of splitting/wrapping them. The default is not to
+		truncate.
 
 */
 
@@ -44,22 +47,25 @@ import (
 )
 
 const (
-	splitChar    = 32          // space char, decides where to split long lines
-	terminator   = 0           // null terminator marks end of transmission
-	ctsPin       = rpio.Pin(8) // GPIO for CTS
-	sendBufSize  = 256         // send buffer size, in bytes
-	comPort      = "/dev/ttyS0"
-	baudRate     = 19200
-	timeoutLimit = 10              // max number of tries
-	timeoutDelay = time.Second / 2 // interval between tries
+	splitChar      = 32          // space char, decides where to split long lines
+	terminator     = 0           // null terminator marks end of transmission
+	ctsPin         = rpio.Pin(8) // GPIO for CTS
+	sendBufSize    = 256         // send buffer size, in bytes
+	comPort        = "/dev/ttyS0"
+	baudRate       = 19200
+	timeoutLimit   = 10 // max number of tries
+	defaultColumns = 80
+	timeoutDelay   = time.Second / 2 // interval between tries
 )
 
 var (
-	lineend     = []byte{13, 10}     // not constant, may change later
-	transmitEnd = []byte{terminator} // terminator as byte array
+	lineend           = []byte{13, 10}     // CR and LF
+	transmitEnd       = []byte{terminator} // terminator as byte array
+	validColumnWidths = [...]int{40, 80, 132}
 	// defaults
-	printerColumns = 80
+	printerColumns = defaultColumns
 	splitLongLines = true
+	truncateLines  = false
 	//filepath := ""
 	filepath = "/home/pi/code/test.txt" // for testing only
 )
@@ -86,18 +92,19 @@ func main() {
 	flag.StringVar(&filepath, "f", filepath, "filename (with full path)")
 	flag.IntVar(&printerColumns, "c", printerColumns, "number of columns")
 	flag.BoolVar(&splitLongLines, "s", splitLongLines, "split long lines on spaces")
+	flag.BoolVar(&truncateLines, "t", truncateLines, "truncate lines instead of splitting")
 	flag.Parse()
 	if filepath == "" {
 		log.Fatal("*** ERROR: No file specified")
 	}
 	validColumns := false
-	for _, cols := range []int{40, 80, 132} {
+	for _, cols := range validColumnWidths {
 		if printerColumns == cols {
 			validColumns = true
 		}
 	}
 	if !validColumns {
-		printerColumns = 80
+		printerColumns = defaultColumns
 	}
 
 	// *************************************************************************
@@ -116,50 +123,54 @@ func main() {
 		if len(line) <= printerColumns {
 			lines = append(lines, line)
 		} else { // line is too long for printer
-			for len(line) > printerColumns {
-				splitIdx := printerColumns
-				foundSpace := false
-				removeLeadingSpace := 0
-				if splitLongLines { // do we want to split long lines at spaces?
-					if (line[printerColumns-1] != splitChar) &&
-						(line[printerColumns] != splitChar) {
-						// the line isn't going to split at a space
-						for !foundSpace && splitIdx > 0 {
-							splitIdx--
-							if line[splitIdx] == splitChar {
-								foundSpace = true
+			if truncateLines {
+				line = line[:printerColumns]
+			} else {
+				for len(line) > printerColumns {
+					splitIdx := printerColumns
+					foundSpace := false
+					removeLeadingSpace := 0
+					if splitLongLines { // do we want to split long lines at spaces?
+						if (line[printerColumns-1] != splitChar) &&
+							(line[printerColumns] != splitChar) {
+							// the line isn't going to split at a space
+							for !foundSpace && splitIdx > 0 {
+								splitIdx--
+								if line[splitIdx] == splitChar {
+									foundSpace = true
+									removeLeadingSpace = 1
+								}
+							}
+							if !foundSpace {
+								// we never found a space, so just split the text
+								// anyway by resetting to default column setting
+								splitIdx = printerColumns
+							}
+						} else {
+							// the line will naturally split on a space at the
+							// default column setting. But is the space at the end
+							// of this line or the beginning of the next? That will
+							// determine whether we need to remove a leading space
+							// from the beginning of the next line.
+							if line[printerColumns] == splitChar {
 								removeLeadingSpace = 1
 							}
 						}
-						if !foundSpace {
-							// we never found a space, so just split the text
-							// anyway by resetting to default column setting
-							splitIdx = printerColumns
-						}
-					} else {
-						// the line will naturally split on a space at the
-						// default column setting. But is the space at the end
-						// of this line or the beginning of the next? That will
-						// determine whether we need to remove a leading space
-						// from the beginning of the next line.
-						if line[printerColumns] == splitChar {
-							removeLeadingSpace = 1
-						}
-					}
+					} // if splitLongLines
+					// get next line
+					lines = append(lines, line[:splitIdx])
+					// truncate line by removing text found above.
+					// If we split on a space above, the next line
+					// will start with that space, which we now need to remove
+					line = line[splitIdx+removeLeadingSpace:]
+				} // for len(line)
+				// add any remaining text from paragraph
+				if len(line) > 0 {
+					lines = append(lines, line)
 				}
-				// get next line
-				lines = append(lines, line[:splitIdx])
-				// truncate line by removing text found above.
-				// If we split on a space above, the next line
-				// will start with that space, which we now need to remove
-				line = line[splitIdx+removeLeadingSpace:]
-			}
-			// add any remaining text from paragraph
-			if len(line) > 0 {
-				lines = append(lines, line)
-			}
-		}
-	}
+			} // if truncateLines
+		} // if len(line)
+	} // for scanner.Scan()
 	// *************************************************************************
 	// *****   SEND TO SMARTPARALLEL                                       *****
 	// *************************************************************************
