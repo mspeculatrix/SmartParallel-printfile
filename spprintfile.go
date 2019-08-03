@@ -90,6 +90,15 @@ func main() {
 	if filepath == "" {
 		log.Fatal("*** ERROR: No file specified")
 	}
+	validColumns := false
+	for _, cols := range []int{40, 80, 132} {
+		if printerColumns == cols {
+			validColumns = true
+		}
+	}
+	if !validColumns {
+		printerColumns = 80
+	}
 
 	// *************************************************************************
 	// *****   READ FILE                                                   *****
