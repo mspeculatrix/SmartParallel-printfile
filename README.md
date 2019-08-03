@@ -10,7 +10,7 @@ Currently uses the stianeikeland/go-rpio library for accessing the RPi's
 GPIO pins.
 
 ### Usage:
-**spprintfile -f <file>**
+**spprintfile -f \<file>**
 		The file must be specified this way, otherwise the program throws an error (file not found.)
 
 Other flags:
