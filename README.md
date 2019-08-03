@@ -22,4 +22,8 @@ Number of columns. Defaults to 80. Other valid values are 132 (condensed mode) a
 
 **-s=\<bool>**
 
-Split long lines (default). Normally, any lines longer that the number of columns will be split by looking for a suitable space - so that words don't get split. If there is no space earlier in the line, the text will simply be split at the defined number of columns. This latter behaviour can be enforced with: -s=false
+Split long lines (default). Normally, any lines longer that the number of columns will be split by looking for a suitable space earllier in the line - so that lines don't get split mid-word. If there is no space earlier in the line, the text will simply be split at the defined number of columns. This latter behaviour can be enforced with: -s=false
+
+**-t=\<bool>**
+
+Truncate lines instead of splitting/wrapping them. The default is not to truncate.
