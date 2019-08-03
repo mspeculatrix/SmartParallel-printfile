@@ -47,7 +47,7 @@ import (
 )
 
 const (
-	splitChar      = 32          // space char, decides where to split long lines
+	splitChar      = 32          // space, decides where to split long lines
 	terminator     = 0           // null terminator marks end of transmission
 	ctsPin         = rpio.Pin(8) // GPIO for CTS
 	sendBufSize    = 256         // send buffer size, in bytes
