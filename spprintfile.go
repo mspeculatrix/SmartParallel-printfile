@@ -59,9 +59,9 @@ const (
 )
 
 var (
-	lineend           = []byte{13, 10}     // CR and LF
-	transmitEnd       = []byte{terminator} // terminator as byte array
-	validColumnWidths = [...]int{40, 80, 132}
+	lineend           = []byte{13, 10}        // CR and LF
+	transmitEnd       = []byte{terminator}    // terminator as byte array
+	validColumnWidths = [...]int{40, 80, 132} // fixed size array
 	// defaults
 	printerColumns = defaultColumns
 	splitLongLines = true
