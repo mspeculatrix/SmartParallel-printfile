@@ -17,6 +17,8 @@ Usage:
 		The file must be specified this way, otherwise the program throws
 		an error (file not found.)
 Other flags:
+	-b=<bool>
+		Preserve blank lines. Default: true.
 	-c <int>
 		Number of columns. Defaults to 80. Other valid values are 132
 		(condensed mode) and 40 (double-width mode). All other values are
@@ -47,14 +49,14 @@ import (
 )
 
 const (
-	splitChar      = 32          // space, decides where to split long lines
-	terminator     = 0           // null terminator marks end of transmission
-	ctsPin         = rpio.Pin(8) // GPIO for CTS
-	sendBufSize    = 256         // send buffer size, in bytes
-	comPort        = "/dev/ttyS0"
-	baudRate       = 19200
-	timeoutLimit   = 10 // max number of tries
-	defaultColumns = 80
+	splitChar      = 32              // space, decides where to split long lines
+	terminator     = 0               // null terminator marks end of transmission
+	ctsPin         = rpio.Pin(18)    // GPIO for CTS - BCM numbering
+	sendBufSize    = 256             // send buffer size, in bytes
+	comPort        = "/dev/ttyS0"    // Rpi3/4 mini-UART
+	baudRate       = 19200           // fast enough
+	timeoutLimit   = 10              // max number of tries
+	defaultColumns = 80              // because it's an Epson MX-80
 	timeoutDelay   = time.Second / 2 // interval between tries
 )
 
@@ -184,7 +186,8 @@ func main() {
 	// takes time, it's a very small amount of time and this is not a
 	// performance-critical program.
 	for _, line := range lines {
-		for !timedOut {
+		lineSent := false
+		for !timedOut && !lineSent {
 			if ctsPin.Read() == rpio.Low {
 				timeoutCounter = 0
 				lineCount++
@@ -193,6 +196,7 @@ func main() {
 				if writeError != nil {
 					fmt.Println("fuck", writeError)
 				}
+				lineSent = true
 				serialPort.Write(lineend)
 				serialPort.Write(transmitEnd)
 			} else {
