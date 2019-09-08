@@ -3,11 +3,15 @@ package main
 /*
 *** WORK IN PROGRESS - NOT COMPLETE ***
 
+TO DO:
+	- writing to serial as goroutine ?
+	- reading from serial as separate goroutine ?
+
 Command-line program to print a text file via the SmartParallel interface.
 
 There's currently no checking to ensure the file is a valid and plain text
-file. Passing it a binary file or something with weird unicode characters
-will result in 'undefined behaviour'.
+file. Passing it a binary file or something with unicode characters will result
+in 'undefined behaviour'.
 
 Currently uses the stianeikeland/go-rpio library for accessing the RPi's
 GPIO pins.
@@ -20,7 +24,7 @@ Other flags:
 	-b=<bool>
 		Preserve blank lines. Default: true.
 	-c <int>
-		Number of columns. Defaults to 80. Other valid values are 132
+		Number of print columns. Defaults to 80. Other valid values are 132
 		(condensed mode) and 40 (double-width mode). All other values are
 		ignored and the program will default back to 80.
 	-s=<bool>
@@ -28,11 +32,9 @@ Other flags:
 		number of columns will be split by looking for a suitable space - so
 		that words don't get split. If there is no space earlier in the line,
 		the text will simply be split at the defined number of columns.
-		This latter behaviour can be enforced with:
-			-s=false
+		Default: true.
 	-t=<bool>
-		Truncate lines instead of splitting/wrapping them. The default is not to
-		truncate.
+		Truncate lines instead of splitting/wrapping them. Default: false.
 
 */
 
@@ -49,28 +51,51 @@ import (
 )
 
 const (
-	splitChar      = 32              // space, decides where to split long lines
-	terminator     = 0               // null terminator marks end of transmission
-	ctsPin         = rpio.Pin(18)    // GPIO for CTS - BCM numbering
-	sendBufSize    = 256             // send buffer size, in bytes
-	comPort        = "/dev/ttyS0"    // Rpi3/4 mini-UART
-	baudRate       = 19200           // fast enough
-	timeoutLimit   = 10              // max number of tries
-	defaultColumns = 80              // because it's an Epson MX-80
-	timeoutDelay   = time.Second / 2 // interval between tries
+	splitChar        = 32              // space, decides where to split long lines
+	terminator       = 0               // null terminator marks end of transmission
+	ctsPin           = rpio.Pin(18)    // GPIO for CTS - BCM numbering
+	ctsActiveLevel   = rpio.Low        // active low or active high?
+	sendBufSize      = 256             // send buffer size, in bytes
+	comPort          = "/dev/ttyS0"    // Rpi3/4 mini-UART
+	baudRate         = 19200           // fast enough
+	timeoutLimit     = 10              // max number of tries
+	defaultColumns   = 80              // because it's an Epson MX-80
+	sendTimeoutDelay = time.Second / 2 // interval between tries
+	readTimeout      = 2               // seconds
+	readBufSize      = 256             // bytes
 )
 
 var (
 	lineend           = []byte{13, 10}        // CR and LF
 	transmitEnd       = []byte{terminator}    // terminator as byte array
 	validColumnWidths = [...]int{40, 80, 132} // fixed size array
+	readBuf           = make([]byte, readBufSize)
 	// defaults
-	printerColumns = defaultColumns
-	splitLongLines = true
-	truncateLines  = false
+	printerColumns        = defaultColumns
+	printerReady          = false
+	prevPrinterReadyState = false
+	splitLongLines        = true
+	truncateLines         = false
 	//filepath := ""
 	filepath = "/home/pi/code/test.txt" // for testing only
 )
+
+func printerIsReady() bool {
+	if ctsPin.Read() == ctsActiveLevel {
+		printerReady = true
+	} else {
+		printerReady = false
+	}
+	if printerReady != prevPrinterReadyState {
+		if printerReady {
+			fmt.Println("-- clear to send")
+		} else {
+			fmt.Println("-- printer is not ready")
+		}
+		prevPrinterReadyState = printerReady
+	}
+	return printerReady
+}
 
 func main() {
 
@@ -84,7 +109,7 @@ func main() {
 	ctsPin.PullUp() // make CTS active low
 
 	// configure serial
-	com := &serial.Config{Name: comPort, Baud: baudRate}
+	com := &serial.Config{Name: comPort, Baud: baudRate, ReadTimeout: readTimeout}
 	serialPort, err := serial.OpenPort(com)
 	if err != nil {
 		log.Fatal(err)
@@ -180,7 +205,7 @@ func main() {
 	timeoutCounter := 0
 	timedOut := false
 	lineCount := 0
-	// If a timeout happens, while waiting for CTS to go low, sending of lines
+	// If a timeout happens, while waiting for CTS to go high, sending of lines
 	// will stop, so that's a fail condition. The outside loop below will
 	// continue, but silently, without ouput. That's okay because, although it
 	// takes time, it's a very small amount of time and this is not a
@@ -188,7 +213,7 @@ func main() {
 	for _, line := range lines {
 		lineSent := false
 		for !timedOut && !lineSent {
-			if ctsPin.Read() == rpio.Low {
+			if printerIsReady() {
 				timeoutCounter = 0
 				lineCount++
 				fmt.Println(line)
@@ -207,8 +232,22 @@ func main() {
 					fmt.Println("timed out")
 					log.Println("*** ERROR: Timed out after", lineCount, "lines")
 				} else {
-					time.Sleep(timeoutDelay)
+					time.Sleep(sendTimeoutDelay)
 				}
+			}
+		}
+		// this is purely for experimental purposes - won't be a part of the
+		// final program.
+		// But we might want some way od dealing with messages from the
+		// SmartParallel.
+		if lineSent {
+			// read from the serial port. The number of bytes read is
+			// in n
+			n, err := serialPort.Read(readBuf)
+			if err != nil {
+				log.Println("Error read input", err)
+			} else if n > 0 {
+				fmt.Printf("%q", readBuf[:n])
 			}
 		}
 	}
