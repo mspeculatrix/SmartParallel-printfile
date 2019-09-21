@@ -6,6 +6,7 @@ package main
 TO DO:
 	- writing to serial as goroutine ?
 	- reading from serial as separate goroutine ?
+	- move more functions into the library msgolib/smartparallel
 
 Platform: Raspberry Pi
 
@@ -67,8 +68,6 @@ const (
 )
 
 var (
-	lineend           = []byte{13, 10}                          // CR and LF
-	transmitEnd       = []byte{smartparallel.Terminator}        // as byte array for easy appending
 	validColumnWidths = [...]int{40, 80, 132}                   // fixed size array
 	readBuf           = make([]byte, smartparallel.ReadBufSize) // serial input buffer
 	// defaults
@@ -275,8 +274,8 @@ func main() {
 					if writeError != nil {
 						log.Fatal("*** ERROR: Write error", writeError)
 					}
-					serialPort.Write(lineend)
-					serialPort.Write(transmitEnd)
+					serialPort.Write(smartparallel.LineEnd)
+					serialPort.Write(smartparallel.TransmitEnd)
 					lineSent = true
 					lineCount++
 					//wait for CTS to go offline
