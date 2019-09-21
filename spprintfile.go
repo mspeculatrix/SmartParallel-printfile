@@ -1,7 +1,7 @@
 package main
 
 /*
-*** WORK IN PROGRESS - NOT COMPLETE ***
+*** WORKING VERSION but still a WORK IN PROGRESS ***
 
 TO DO:
 	- writing to serial as goroutine ?
