@@ -329,7 +329,7 @@ func main() {
 					verbosePrint(".")
 					if timeoutCounter == timeoutLimit {
 						timedOut = true
-						verbosePrintln("*** ERROR: Timed out after", string(lineCount), "lines sent")
+						verbosePrintln("*** ERROR: Timed out after ", string(lineCount), " lines sent")
 						timeoutCounter = 0
 					} else {
 						time.Sleep(sendTimeoutDelay)
@@ -344,6 +344,6 @@ func main() {
 				//checkSerialInput(serialPort)
 			}
 		}
-		log.Println("Sent", lineCount, "lines")
+		verbosePrintln("Sent ", string(lineCount), " lines")
 	} // else
 }
