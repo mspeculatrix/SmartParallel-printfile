@@ -7,11 +7,13 @@ TO DO:
 	- writing to serial as goroutine ?
 	- reading from serial as separate goroutine ?
 
+Platform: Raspberry Pi
+
 Command-line program to print a text file via the SmartParallel interface.
 
 There's currently no checking to ensure the file is a valid and plain text
-file. Passing it a binary file or something with unicode characters will result
-in 'undefined behaviour'.
+file. Passing it a binary file or something with unicode characters or anything
+else fancy will result in 'undefined behaviour'.
 
 Currently uses the stianeikeland/go-rpio library for accessing the RPi's
 GPIO pins.
@@ -28,12 +30,15 @@ Other flags:
 		ignored and the program will default back to 80.
 	-p 	Get printer status. If this is passed, all other flags are ignored.
 		Default: false.
-	-s 	Split long lines (default). Normally, any lines longer that the
-		number of columns will be split by looking for a suitable space - so
-		that words don't get split. If there is no space earlier in the line,
-		the text will simply be split at the defined number of columns.
-		Default: false.
+	-s 	Split long lines (default). Any lines longer that the number of columns
+		will be split by looking for a suitable space - so that words don't get
+		split. If there is no space earlier in the line, the text will simply be
+		split at the defined number of columns, which is also the behaviour if
+		this option is set to false. Default: false.
 	-t	Truncate lines instead of splitting/wrapping them. Default: false.
+	-v  Verbose mode. Default: false.
+	-x  Experimental mode - could mean anything. All other flags ignored.
+		Default: false.
 
 */
 
@@ -66,41 +71,103 @@ const (
 )
 
 var (
-	lineend           = []byte{13, 10}        // CR and LF
-	transmitEnd       = []byte{terminator}    // terminator as byte array
-	validColumnWidths = [...]int{40, 80, 132} // fixed size array
-	//printerState      = "UNKNOWN"
-	//printerStates     = [...]string{"READY", "DONE", "INIT", "OFFLINE",
-	//	"PRINTING", "BUSY", "ERROR", "PE", "ACK_TIMEOUT", "BUSY_TIMEOUT"}
-	readBuf = make([]byte, readBufSize)
+	lineend           = []byte{13, 10}            // CR and LF
+	transmitEnd       = []byte{terminator}        // terminator as byte array
+	validColumnWidths = [...]int{40, 80, 132}     // fixed size array
+	readBuf           = make([]byte, readBufSize) // serial input buffer
 	// defaults
-	printerReady          = false
-	prevPrinterReadyState = printerReady
+	interfaceReady          = false
+	prevInterfaceReadyState = interfaceReady
 	// command line arguments
 	printerColumns   = defaultColumns
 	ignoreBlankLines = false
 	splitLongLines   = false
 	truncateLines    = false
 	getStatus        = false
-	//filepath := ""
-	filepath = "/home/pi/code/test.txt" // for testing only
+	experimental     = false
+	verbose          = false
+	filepath         = ""
+	//filepath = "/home/pi/code/test.txt" // for testing only
 )
 
-func printerIsReady() bool {
-	if ctsPin.Read() == ctsActiveLevel {
-		printerReady = true
-	} else {
-		printerReady = false
-	}
-	if printerReady != prevPrinterReadyState {
-		if printerReady {
-			fmt.Println("-- clear to send")
-		} else {
-			fmt.Println("-- printer is not ready")
+func checkSerialInput(sPort *serial.Port) (int, string) {
+	readBuf = readBuf[:0]  // empty out read buffer but retain it in memory
+	buf := make([]byte, 1) // temp buffer for each read
+	charIdx := 0
+	done := false
+	for !done {
+		n, err := sPort.Read(buf) // read one char
+		if n > 0 {
+			// we've received something, even though it might not be all.
+			// Note that, although we've received chars, err might be
+			// non-nil as well, which is why we're testing for them
+			// separately.
+			// SmartParallel terminates outgoing serial messages with a
+			// newline/linefeed - ASCII 10, hex 0x0A.
+			if buf[0] == 10 {
+				done = true
+			} else {
+				readBuf = append(readBuf, buf[0])
+				charIdx++
+				if charIdx == readBufSize {
+					done = true
+				}
+			}
 		}
-		prevPrinterReadyState = printerReady
+		if err != nil {
+			done = true
+			// there can be an error, such as EOF, even when n is not 0
+			if err.Error() == "EOF" {
+				verbosePrintln("!EOF")
+			} else {
+				verbosePrintln("Error read input", err.Error())
+			}
+		}
 	}
-	return printerReady
+	return charIdx, string(readBuf[:charIdx])
+}
+
+func interfaceIsReady() bool {
+	if ctsPin.Read() == ctsActiveLevel {
+		interfaceReady = true
+	} else {
+		interfaceReady = false
+	}
+	if interfaceReady != prevInterfaceReadyState {
+		if interfaceReady {
+			verbosePrintln("-- clear to send")
+		} else {
+			verbosePrintln("-- printer is not ready")
+		}
+		prevInterfaceReadyState = interfaceReady
+	}
+	return interfaceReady
+}
+
+func printerState(sPort *serial.Port) string {
+	var result string
+	sPort.Write([]byte{smartparallel.SerialCommandChar}) // command byte
+	sPort.Write([]byte{smartparallel.CmdReportState})
+	sPort.Write([]byte{smartparallel.Terminator})
+	_, result = checkSerialInput(sPort)
+	return result
+}
+
+func verbosePrint(msgs ...string) {
+	if verbose {
+		for _, msg := range msgs {
+			fmt.Print(msg)
+		}
+	}
+}
+
+func verbosePrintln(msgs ...string) {
+	if verbose {
+		for _, msg := range msgs {
+			fmt.Print(msg)
+		}
+		fmt.Println()
+	}
 }
 
 func main() {
@@ -120,8 +187,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	serialPort.Write([]byte("Testing the SmartParallel"))
-	serialPort.Write(transmitEnd)
 	// command-line flags
 	flag.StringVar(&filepath, "f", filepath, "filename (with full path)")
 	flag.BoolVar(&ignoreBlankLines, "b", ignoreBlankLines, "ignore blank lines")
@@ -129,6 +194,8 @@ func main() {
 	flag.BoolVar(&getStatus, "p", getStatus, "get printer status")
 	flag.BoolVar(&splitLongLines, "s", splitLongLines, "split long lines on spaces")
 	flag.BoolVar(&truncateLines, "t", truncateLines, "truncate lines instead of splitting")
+	flag.BoolVar(&verbose, "v", verbose, "verbose mode")
+	flag.BoolVar(&experimental, "x", experimental, "experimental mode")
 	flag.Parse()
 	if filepath == "" && getStatus == false {
 		log.Fatal("*** ERROR: No file specified")
@@ -144,16 +211,16 @@ func main() {
 	}
 
 	// *************************************************************************
-	// *****   READ FILE                                                   *****
+	// *****   READ FILE or GET STATUS                                     *****
 	// *************************************************************************
-	fmt.Println("=========================")
+	verbosePrintln("spprintfile - printing to SmartParallel")
 	if getStatus {
 		fmt.Println("Checking printer status")
-		serialPort.Write([]byte{smartparallel.SerialCommandChar}) // command byte
-		serialPort.Write([]byte{smartparallel.CmdReportState})
-		checkSerialInput(serialPort)
+		fmt.Println(printerState(serialPort))
+	} else if experimental {
+		// Put anything you want here just to try stuff out
 	} else {
-		fmt.Println("Reading from file...")
+		verbosePrintln("Reading from file...")
 		fh, err := os.Open(filepath)
 		if err != nil {
 			log.Fatal("*** ERROR: Problem opening file", err)
@@ -169,7 +236,7 @@ func main() {
 			if len(line) <= printerColumns {
 				lines = append(lines, line)
 			} else { // line is too long for printer
-				if truncateLines {
+				if truncateLines { // we've opted simply to trucate long lines
 					line = line[:printerColumns]
 				} else {
 					for len(line) > printerColumns {
@@ -210,7 +277,9 @@ func main() {
 						// will start with that space, which we now need to remove
 						line = line[splitIdx+removeLeadingSpace:]
 					} // for len(line)
-					// add any remaining text from paragraph
+					// By now, the length of any remaining text in line is
+					// <= printerColumns, so we can simply add any remaining
+					// text from the paragraph.
 					if len(line) > 0 {
 						lines = append(lines, line)
 					}
@@ -218,16 +287,17 @@ func main() {
 			} // if len(line)
 		} // for scanner.Scan()
 
-		fmt.Println("........................")
-		fmt.Println("Lines read:")
+		verbosePrintln("........................")
+		verbosePrintln("Lines read:")
 		for _, line := range lines {
-			fmt.Println(line)
+			verbosePrintln(line)
 		}
+
 		// *************************************************************************
 		// *****   SEND TO SMARTPARALLEL                                       *****
 		// *************************************************************************
-		fmt.Println("........................")
-		fmt.Println("Sending to SmartParallel")
+		verbosePrintln("........................")
+		verbosePrintln("Sending to SmartParallel")
 		timeoutCounter := 0
 		timedOut := false
 		lineCount := 0
@@ -239,54 +309,41 @@ func main() {
 		for _, line := range lines {
 			lineSent := false
 			for !timedOut && !lineSent {
-				if printerIsReady() {
-					fmt.Print(">")
+				if interfaceIsReady() {
 					timeoutCounter = 0
-					lineCount++
-					fmt.Println(line)
+					verbosePrintln(line)
 					_, writeError := serialPort.Write([]byte(line))
 					if writeError != nil {
-						fmt.Println("*** ERROR: Write error", writeError)
+						log.Fatal("*** ERROR: Write error", writeError)
 					}
 					serialPort.Write(lineend)
 					serialPort.Write(transmitEnd)
 					lineSent = true
+					lineCount++
+					//wait for CTS to go offline
+					for ctsPin.Read() == ctsActiveLevel {
+						// nothing
+					}
 				} else {
 					timeoutCounter++
-					fmt.Print(".")
+					verbosePrint(".")
 					if timeoutCounter == timeoutLimit {
 						timedOut = true
-						fmt.Println("*** ERROR: Timed out after", lineCount, "lines sent")
+						verbosePrintln("*** ERROR: Timed out after", string(lineCount), "lines sent")
+						timeoutCounter = 0
 					} else {
 						time.Sleep(sendTimeoutDelay)
 					}
 				}
+				//time.Sleep(time.Second)
 			}
-			// this is purely for experimental purposes - won't be a part of the
-			// final program.
-			// But we might want some way od dealing with messages from the
+			// Might want some way of dealing with messages from the
 			// SmartParallel.
 			if lineSent {
-				// read from the serial port. The number of bytes read is
-				// in n
-				checkSerialInput(serialPort)
+				// read from the serial port
+				//checkSerialInput(serialPort)
 			}
 		}
 		log.Println("Sent", lineCount, "lines")
 	} // else
-}
-
-func checkSerialInput(sPort *serial.Port) {
-	n, err := sPort.Read(readBuf)
-	time.Sleep(10 * time.Millisecond)
-	if err != nil {
-		if err.Error() == "EOF" {
-			//fmt.Println("-- no serial data")
-		} else {
-			fmt.Println("Error read input", err)
-		}
-	} else if n > 0 {
-		fmt.Println(n, "chars")
-		fmt.Printf("%s\n", readBuf[:n])
-	}
 }
