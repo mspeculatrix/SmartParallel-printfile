@@ -56,30 +56,26 @@ import (
 )
 
 const (
-	splitChar      = 32           // space, decides where to split long lines
-	terminator     = 0            // null terminator marks end of transmission
-	ctsPin         = rpio.Pin(18) // GPIO for CTS - BCM numbering
-	ctsActiveLevel = rpio.Low     // active low or active high?
-	//sendBufSize      = 256             // send buffer size, in bytes
+	splitChar        = 32              // space, decides where to split long lines
+	ctsPin           = rpio.Pin(18)    // GPIO for CTS - BCM numbering
+	ctsActiveLevel   = rpio.Low        // active low or active high?
 	comPort          = "/dev/ttyS0"    // Rpi3/4 mini-UART
 	baudRate         = 19200           // fast enough
 	timeoutLimit     = 10              // max number of tries
-	defaultColumns   = 80              // because it's an Epson MX-80
 	sendTimeoutDelay = time.Second / 2 // interval between tries
 	readTimeout      = 2               // seconds
-	readBufSize      = 1024            // bytes
 )
 
 var (
-	lineend           = []byte{13, 10}            // CR and LF
-	transmitEnd       = []byte{terminator}        // terminator as byte array
-	validColumnWidths = [...]int{40, 80, 132}     // fixed size array
-	readBuf           = make([]byte, readBufSize) // serial input buffer
+	lineend           = []byte{13, 10}                          // CR and LF
+	transmitEnd       = []byte{smartparallel.Terminator}        // as byte array for easy appending
+	validColumnWidths = [...]int{40, 80, 132}                   // fixed size array
+	readBuf           = make([]byte, smartparallel.ReadBufSize) // serial input buffer
 	// defaults
 	interfaceReady          = false
 	prevInterfaceReadyState = interfaceReady
 	// command line arguments
-	printerColumns   = defaultColumns
+	printerColumns   = smartparallel.DefaultColumns
 	ignoreBlankLines = false
 	splitLongLines   = false
 	truncateLines    = false
@@ -89,43 +85,6 @@ var (
 	filepath         = ""
 	//filepath = "/home/pi/code/test.txt" // for testing only
 )
-
-func checkSerialInput(sPort *serial.Port) (int, string) {
-	readBuf = readBuf[:0]  // empty out read buffer but retain it in memory
-	buf := make([]byte, 1) // temp buffer for each read
-	charIdx := 0
-	done := false
-	for !done {
-		n, err := sPort.Read(buf) // read one char
-		if n > 0 {
-			// we've received something, even though it might not be all.
-			// Note that, although we've received chars, err might be
-			// non-nil as well, which is why we're testing for them
-			// separately.
-			// SmartParallel terminates outgoing serial messages with a
-			// newline/linefeed - ASCII 10, hex 0x0A.
-			if buf[0] == 10 {
-				done = true
-			} else {
-				readBuf = append(readBuf, buf[0])
-				charIdx++
-				if charIdx == readBufSize {
-					done = true
-				}
-			}
-		}
-		if err != nil {
-			done = true
-			// there can be an error, such as EOF, even when n is not 0
-			if err.Error() == "EOF" {
-				verbosePrintln("!EOF")
-			} else {
-				verbosePrintln("Error read input", err.Error())
-			}
-		}
-	}
-	return charIdx, string(readBuf[:charIdx])
-}
 
 func interfaceIsReady() bool {
 	if ctsPin.Read() == ctsActiveLevel {
@@ -149,7 +108,7 @@ func printerState(sPort *serial.Port) string {
 	sPort.Write([]byte{smartparallel.SerialCommandChar}) // command byte
 	sPort.Write([]byte{smartparallel.CmdReportState})
 	sPort.Write([]byte{smartparallel.Terminator})
-	_, result = checkSerialInput(sPort)
+	_, result = smartparallel.CheckSerialInput(sPort, readBuf)
 	return result
 }
 
@@ -207,7 +166,7 @@ func main() {
 		}
 	}
 	if !validColumns {
-		printerColumns = defaultColumns
+		printerColumns = smartparallel.DefaultColumns
 	}
 
 	// *************************************************************************
@@ -341,7 +300,7 @@ func main() {
 			// SmartParallel.
 			if lineSent {
 				// read from the serial port
-				//checkSerialInput(serialPort)
+				//smartparallel.checkSerialInput(serialPort, readBuf)
 			}
 		}
 		verbosePrintln("Sent ", string(lineCount), " lines")
