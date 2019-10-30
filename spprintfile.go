@@ -21,7 +21,7 @@ GPIO pins.
 
 Usage:
 	spprintfile -f <file>
-		The file must be specified this way, otherwise the program throws
+		The file must be specified, otherwise the program throws
 		an error (file not found.)
 Other flags:
 	-b	Ignore blank lines. Default: false. *** NOT IMPLEMENTED YET ***
@@ -29,6 +29,12 @@ Other flags:
 		Number of print columns. Defaults to 80. Other valid values are 132
 		(condensed mode) and 40 (double-width mode). All other values are
 		ignored and the program will default back to 80.
+	-m <string>
+		Print mode - alternative to -c and will override -c if used
+		together. Valid modes are:
+			'norm'	- normal (default) - equivalent to -c 80.
+			'cond'	- condensed - equivalent to -c 132
+			'wide'	- wide/enlarged - equivalent to -c 40
 	-p 	Get printer status. If this is passed, all other flags are ignored.
 		Default: false.
 	-s 	Split long lines (default). Any lines longer that the number of columns
@@ -49,6 +55,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mspeculatrix/msgolib/smartparallel"
@@ -57,7 +65,7 @@ import (
 )
 
 const (
-	splitChar        = 32              // space, decides where to split long lines
+	splitChar        = 32              // space, where to split long lines
 	ctsPin           = rpio.Pin(18)    // GPIO for CTS - BCM numbering
 	ctsActiveLevel   = rpio.Low        // active low or active high?
 	comPort          = "/dev/ttyS0"    // Rpi3/4 mini-UART
@@ -68,21 +76,23 @@ const (
 )
 
 var (
-	validColumnWidths = [...]int{40, 80, 132}                   // fixed size array
-	readBuf           = make([]byte, smartparallel.ReadBufSize) // serial input buffer
+	readBuf = make([]byte, smartparallel.ReadBufSize) // serial input buffer
 	// defaults
 	interfaceReady          = false
 	prevInterfaceReadyState = interfaceReady
 	// command line arguments
-	printerColumns   = smartparallel.DefaultColumns
+	printerColumns   = 80
+	printMode        = "norm"
+	infoBanner       = false
 	ignoreBlankLines = false
 	splitLongLines   = false
 	truncateLines    = false
-	getStatus        = false
 	experimental     = false
 	verbose          = false
+	debug            = false
 	filepath         = ""
-	//filepath = "/home/pi/code/test.txt" // for testing only
+	modeSetCode      = []byte{}
+	modeUnsetCode    = []byte{}
 )
 
 func interfaceIsReady() bool {
@@ -93,9 +103,9 @@ func interfaceIsReady() bool {
 	}
 	if interfaceReady != prevInterfaceReadyState {
 		if interfaceReady {
-			verbosePrintln("-- clear to send")
+			debugPrintln("-- CTS OK")
 		} else {
-			verbosePrintln("-- printer is not ready")
+			debugPrintln("-- CTS OFFLINE")
 		}
 		prevInterfaceReadyState = interfaceReady
 	}
@@ -109,6 +119,23 @@ func printerState(sPort *serial.Port) string {
 	sPort.Write([]byte{smartparallel.Terminator})
 	_, result = smartparallel.CheckSerialInput(sPort, readBuf)
 	return result
+}
+
+func debugPrint(msgs ...string) {
+	if debug {
+		for _, msg := range msgs {
+			fmt.Print(msg)
+		}
+	}
+}
+
+func debugPrintln(msgs ...string) {
+	if debug {
+		for _, msg := range msgs {
+			fmt.Print(msg)
+		}
+		fmt.Println()
+	}
 }
 
 func verbosePrint(msgs ...string) {
@@ -132,14 +159,15 @@ func main() {
 	// GPIO
 	gpioErr := rpio.Open()
 	if gpioErr != nil {
-		log.Fatal("*** ERROR: Could not open GPIO")
+		log.Fatal("*** ERROR: Could not open GPIO ***")
 	}
 	defer rpio.Close()
 	ctsPin.Input()
-	//ctsPin.PullUp() // make CTS active low
+	//ctsPin.PullUp() // CTS is active low
 
 	// configure serial
-	com := &serial.Config{Name: comPort, Baud: baudRate, ReadTimeout: readTimeout}
+	com := &serial.Config{Name: comPort, Baud: baudRate,
+		ReadTimeout: readTimeout}
 	serialPort, err := serial.OpenPort(com)
 	if err != nil {
 		log.Fatal(err)
@@ -148,37 +176,30 @@ func main() {
 	// command-line flags
 	flag.StringVar(&filepath, "f", filepath, "filename (with full path)")
 	flag.BoolVar(&ignoreBlankLines, "b", ignoreBlankLines, "ignore blank lines")
-	flag.IntVar(&printerColumns, "c", printerColumns, "number of columns")
-	flag.BoolVar(&getStatus, "p", getStatus, "get printer status")
-	flag.BoolVar(&splitLongLines, "s", splitLongLines, "split long lines on spaces")
-	flag.BoolVar(&truncateLines, "t", truncateLines, "truncate lines instead of splitting")
+	flag.BoolVar(&debug, "d", debug, "debug mode - more verbose")
+	flag.BoolVar(&infoBanner, "i", infoBanner, "print banner")
+	flag.StringVar(&printMode, "m", printMode, "print mode")
+	flag.BoolVar(&splitLongLines, "s", splitLongLines,
+		"split long lines on spaces")
+	flag.BoolVar(&truncateLines, "t", truncateLines,
+		"truncate lines instead of splitting")
 	flag.BoolVar(&verbose, "v", verbose, "verbose mode")
 	flag.BoolVar(&experimental, "x", experimental, "experimental mode")
 	flag.Parse()
-	if filepath == "" && getStatus == false {
+	if filepath == "" {
 		log.Fatal("*** ERROR: No file specified")
 	}
-	validColumns := false
-	for _, cols := range validColumnWidths {
-		if printerColumns == cols {
-			validColumns = true
-		}
-	}
-	if !validColumns {
-		printerColumns = smartparallel.DefaultColumns
+	if debug {
+		verbose = true
 	}
 
 	// *************************************************************************
 	// *****   READ FILE or GET STATUS                                     *****
 	// *************************************************************************
-	verbosePrintln("spprintfile - printing to SmartParallel")
-	if getStatus {
-		fmt.Println("Checking printer status")
-		fmt.Println(printerState(serialPort))
-	} else if experimental {
+	if experimental {
 		// Put anything you want here just to try stuff out
 	} else {
-		verbosePrintln("Reading from file...")
+		verbosePrintln("Reading from file: ", filepath)
 		fh, err := os.Open(filepath)
 		if err != nil {
 			log.Fatal("*** ERROR: Problem opening file", err)
@@ -186,7 +207,38 @@ func main() {
 		defer fh.Close()
 		scanner := bufio.NewScanner(fh) // to read line-by-line
 		lines := []string{}             // array to hold lines
-		for scanner.Scan() {            // iterate over lines in file
+		switch printMode {
+		case "emph":
+			modeSetCode = []byte{27, 69}   // ESC E
+			modeUnsetCode = []byte{27, 70} // ESC F
+			printerColumns = 80
+		case "wide":
+			modeSetCode = []byte{27, 87}   // ESC W
+			modeUnsetCode = []byte{27, 87} // ESC W
+			printerColumns = 40
+		case "cond":
+			modeSetCode = []byte{15}   // SHIFT IN
+			modeUnsetCode = []byte{18} // DC2
+			printerColumns = 132
+		default:
+			modeSetCode = []byte{0}
+			modeUnsetCode = []byte{0}
+			printerColumns = 80
+		}
+		if infoBanner {
+			dt := time.Now()
+			date := dt.Format("2006-01-02")
+			time := dt.Format("15:04")
+			banner := ">>> File: " + filepath +
+				"  -  Mode: " + printMode +
+				"  -  Printed: " + date +
+				"  " + time + " <<<"
+			dotline := strings.Repeat("-", len(banner))
+			lines = append(lines, dotline)
+			lines = append(lines, banner)
+			lines = append(lines, dotline)
+		}
+		for scanner.Scan() { // iterate over lines in file
 			line := scanner.Text() // get next line
 			if err := scanner.Err(); err != nil {
 				log.Fatal(err)
@@ -201,7 +253,7 @@ func main() {
 						splitIdx := printerColumns
 						foundSpace := false
 						removeLeadingSpace := 0
-						if splitLongLines { // do we want to split long lines at spaces?
+						if splitLongLines { // split long lines at spaces?
 							if (line[printerColumns-1] != splitChar) &&
 								(line[printerColumns] != splitChar) {
 								// the line isn't going to split at a space
@@ -213,16 +265,18 @@ func main() {
 									}
 								}
 								if !foundSpace {
-									// we never found a space, so just split the text
-									// anyway by resetting to default column setting
+									// we never found a space, so just split the
+									// text anyway by resetting to default
+									// column setting
 									splitIdx = printerColumns
 								}
 							} else {
-								// the line will naturally split on a space at the
-								// default column setting. But is the space at the end
-								// of this line or the beginning of the next? That will
-								// determine whether we need to remove a leading space
-								// from the beginning of the next line.
+								// the line will naturally split on a space at
+								// the default column setting. But is the space
+								// at the end of this line or the beginning of
+								// the next? That will determine whether we need
+								// to remove a leading space from the beginning
+								// of the next line.
 								if line[printerColumns] == splitChar {
 									removeLeadingSpace = 1
 								}
@@ -231,8 +285,8 @@ func main() {
 						// get next line
 						lines = append(lines, line[:splitIdx])
 						// truncate line by removing text found above.
-						// If we split on a space above, the next line
-						// will start with that space, which we now need to remove
+						// If we split on a space above, the next line will
+						// start with that space, which we now need to remove
 						line = line[splitIdx+removeLeadingSpace:]
 					} // for len(line)
 					// By now, the length of any remaining text in line is
@@ -245,25 +299,39 @@ func main() {
 			} // if len(line)
 		} // for scanner.Scan()
 
-		verbosePrintln("........................")
-		verbosePrintln("Lines read:")
-		for _, line := range lines {
-			verbosePrintln(line)
+		verbosePrintln("Lines read: ", strconv.Itoa(len(lines)))
+
+		// *********************************************************************
+		// *****   SEND TO SMARTPARALLEL                                   *****
+		// *********************************************************************
+		verbosePrintln("Sending to SmartParallel")
+		verbosePrint("Initialising printer... ")
+		if interfaceIsReady() {
+			verbosePrintln("ready")
+			serialPort.Write(smartparallel.Init)
+			serialPort.Write(smartparallel.TransmitEnd)
+			for ctsActiveLevel == ctsPin.Read() {
+				// wait for CTS to go high
+			}
+		} else {
+			verbosePrintln("ERROR")
+			log.Fatal("Interface wasn't ready")
 		}
 
-		// *************************************************************************
-		// *****   SEND TO SMARTPARALLEL                                       *****
-		// *************************************************************************
-		verbosePrintln("........................")
-		verbosePrintln("Sending to SmartParallel")
 		timeoutCounter := 0
+		// ctsTimeoutCounter := 0
 		timedOut := false
 		lineCount := 0
-		// If a timeout happens, while waiting for CTS to go high, sending of lines
-		// will stop, so that's a fail condition. The outside loop below will
-		// continue, but silently, without ouput. That's okay because, although it
-		// takes time, it's a very small amount of time and this is not a
-		// performance-critical program.
+		// If a timeout happens, while waiting for CTS to go high, sending of
+		// lines will stop, so that's a fail condition. The outside loop below
+		// will continue, but silently, without ouput. That's okay because,
+		// although it takes time, it's a very small amount of time and this is
+		// not a performance-critical program.
+		if printMode != "norm" {
+			debugPrintln("Mode: ", printMode)
+			serialPort.Write(modeSetCode)
+			//serialPort.Write(smartparallel.TransmitEnd)
+		}
 		for _, line := range lines {
 			lineSent := false
 			for !timedOut && !lineSent {
@@ -278,30 +346,41 @@ func main() {
 					serialPort.Write(smartparallel.TransmitEnd)
 					lineSent = true
 					lineCount++
-					//wait for CTS to go offline
-					for ctsPin.Read() == ctsActiveLevel {
-						// nothing
+					// Wait for CTS to go offline. It should go offline as
+					// soon as SmartParallel receives the
+					// smartparallel.TransmitEnd terminator above. It will then
+					// stay offline until the SmartParallel has finished
+					// printing the text sent, so we should have a reasonable
+					// amount of time in which to detect that it's offline
+					debugPrintln("-- waiting for CTS to go offline")
+					for ctsActiveLevel == ctsPin.Read() {
+						// do nothing - just loop while the CTS line is still
+						// in the active (online) state, waiting for it to
+						// go offline.
+						// Could possibly put a tiny delay in here, but too
+						// much could risk missing the signal change.
+						// An interrupt would be nice. Is that too much to ask?
 					}
+					debugPrintln("-- CTS went offline")
 				} else {
 					timeoutCounter++
-					verbosePrint(".")
+					debugPrint(".")
 					if timeoutCounter == timeoutLimit {
 						timedOut = true
-						verbosePrintln("*** ERROR: Timed out after ", string(lineCount), " lines sent")
+						debugPrintln("!")
+						verbosePrintln("*** ERROR: Timed out after ",
+							strconv.Itoa(lineCount), " lines sent")
 						timeoutCounter = 0
 					} else {
 						time.Sleep(sendTimeoutDelay)
 					}
 				}
-				//time.Sleep(time.Second)
 			}
-			// Might want some way of dealing with messages from the
-			// SmartParallel.
-			if lineSent {
-				// read from the serial port
-				//smartparallel.checkSerialInput(serialPort, readBuf)
-			}
+		} // for line...
+		if printMode != "norm" {
+			serialPort.Write(modeUnsetCode)
+			serialPort.Write(smartparallel.TransmitEnd)
 		}
-		verbosePrintln("Sent ", string(lineCount), " lines")
+		verbosePrintln("Sent ", strconv.Itoa(lineCount), " lines")
 	} // else
 }

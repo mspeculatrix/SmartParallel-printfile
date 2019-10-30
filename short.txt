@@ -1,0 +1,4 @@
+>========!=========!=========!=========!=========!=========!=========!=========<
+This line is exactly 80 characters long, up to the exclamation mark -----------!
+A long paragraph. This is intended to test how the program splits on spaces between words. The paragraph is more than 264 characters long - ie, longer than two 132-column lines, as 132 is the longest line the Epson MX-80 F/T III printer can accommodate.
+[ENDS]
