@@ -35,7 +35,6 @@ Print mode. Sets number of columns and print style (assumes Epson control codes)
 	'norm'	- normal, 80-column (default)
 	'cond'	- condensed, 132-column.
 	'emph'	- emphasised, 80-column
-	'wide'	- wide/enlarged, 40-column.
 All other values are ignored and the program will default back to 80.
 
 **-s**

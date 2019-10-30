@@ -3,10 +3,7 @@ package main
 /*
 *** WORKING VERSION but still a WORK IN PROGRESS ***
 
-TO DO:
-	- writing to serial as goroutine ?
-	- reading from serial as separate goroutine ?
-	- move more functions into the library msgolib/smartparallel
+https://mansfield-devine.com/speculatrix/projects/smartparallel-serial-to-parallel-printer-interface/
 
 Platform: Raspberry Pi
 
@@ -23,30 +20,13 @@ Usage:
 	spprintfile -f <file>
 		The file must be specified, otherwise the program throws
 		an error (file not found.)
-Other flags:
-	-b	Ignore blank lines. Default: false. *** NOT IMPLEMENTED YET ***
-	-c <int>
-		Number of print columns. Defaults to 80. Other valid values are 132
-		(condensed mode) and 40 (double-width mode). All other values are
-		ignored and the program will default back to 80.
-	-m <string>
-		Print mode - alternative to -c and will override -c if used
-		together. Valid modes are:
-			'norm'	- normal (default) - equivalent to -c 80.
-			'cond'	- condensed - equivalent to -c 132
-			'wide'	- wide/enlarged - equivalent to -c 40
-	-p 	Get printer status. If this is passed, all other flags are ignored.
-		Default: false.
-	-s 	Split long lines (default). Any lines longer that the number of columns
-		will be split by looking for a suitable space - so that words don't get
-		split. If there is no space earlier in the line, the text will simply be
-		split at the defined number of columns, which is also the behaviour if
-		this option is set to false. Default: false.
-	-t	Truncate lines instead of splitting/wrapping them. Default: false.
-	-v  Verbose mode. Default: false.
-	-x  Experimental mode - could mean anything. All other flags ignored.
-		Default: false.
 
+	See README.md for other flags.
+
+	TO DO:
+	- writing to serial as goroutine ?
+	- reading from serial as separate goroutine ?
+	- move more functions into the library msgolib/smartparallel
 */
 
 import (
@@ -65,9 +45,10 @@ import (
 )
 
 const (
-	splitChar        = 32              // space, where to split long lines
-	ctsPin           = rpio.Pin(18)    // GPIO for CTS - BCM numbering
-	ctsActiveLevel   = rpio.Low        // active low or active high?
+	splitChar        = 32           // space, where to split long lines
+	ctsPin           = rpio.Pin(18) // GPIO for CTS - BCM numbering
+	ctsOnline        = rpio.Low     // active low or active high?
+	ctsOffline       = rpio.High
 	comPort          = "/dev/ttyS0"    // Rpi3/4 mini-UART
 	baudRate         = 19200           // fast enough
 	timeoutLimit     = 10              // max number of tries
@@ -96,7 +77,7 @@ var (
 )
 
 func interfaceIsReady() bool {
-	if ctsPin.Read() == ctsActiveLevel {
+	if ctsPin.Read() == ctsOnline {
 		interfaceReady = true
 	} else {
 		interfaceReady = false
@@ -193,8 +174,23 @@ func main() {
 		verbose = true
 	}
 
+	switch printMode {
+	case "emph":
+		modeSetCode = []byte{27, 69}   // ESC E
+		modeUnsetCode = []byte{27, 70} // ESC F
+		printerColumns = 80
+	case "cond":
+		modeSetCode = []byte{15}   // SHIFT IN
+		modeUnsetCode = []byte{18} // DC2
+		printerColumns = 132
+	default:
+		modeSetCode = []byte{0}
+		modeUnsetCode = []byte{0}
+		printerColumns = 80
+	}
+
 	// *************************************************************************
-	// *****   READ FILE or GET STATUS                                     *****
+	// *****   READ FILE                                                   *****
 	// *************************************************************************
 	if experimental {
 		// Put anything you want here just to try stuff out
@@ -207,24 +203,7 @@ func main() {
 		defer fh.Close()
 		scanner := bufio.NewScanner(fh) // to read line-by-line
 		lines := []string{}             // array to hold lines
-		switch printMode {
-		case "emph":
-			modeSetCode = []byte{27, 69}   // ESC E
-			modeUnsetCode = []byte{27, 70} // ESC F
-			printerColumns = 80
-		case "wide":
-			modeSetCode = []byte{27, 87}   // ESC W
-			modeUnsetCode = []byte{27, 87} // ESC W
-			printerColumns = 40
-		case "cond":
-			modeSetCode = []byte{15}   // SHIFT IN
-			modeUnsetCode = []byte{18} // DC2
-			printerColumns = 132
-		default:
-			modeSetCode = []byte{0}
-			modeUnsetCode = []byte{0}
-			printerColumns = 80
-		}
+
 		if infoBanner {
 			dt := time.Now()
 			date := dt.Format("2006-01-02")
@@ -310,7 +289,7 @@ func main() {
 			verbosePrintln("ready")
 			serialPort.Write(smartparallel.Init)
 			serialPort.Write(smartparallel.TransmitEnd)
-			for ctsActiveLevel == ctsPin.Read() {
+			for ctsOnline == ctsPin.Read() {
 				// wait for CTS to go high
 			}
 		} else {
@@ -353,7 +332,7 @@ func main() {
 					// printing the text sent, so we should have a reasonable
 					// amount of time in which to detect that it's offline
 					debugPrintln("-- waiting for CTS to go offline")
-					for ctsActiveLevel == ctsPin.Read() {
+					for ctsOnline == ctsPin.Read() {
 						// do nothing - just loop while the CTS line is still
 						// in the active (online) state, waiting for it to
 						// go offline.
@@ -377,9 +356,15 @@ func main() {
 				}
 			}
 		} // for line...
+
+		// The following is probably not necessary, but just in case...
 		if printMode != "norm" {
-			serialPort.Write(modeUnsetCode)
-			serialPort.Write(smartparallel.TransmitEnd)
+			if interfaceIsReady() {
+				serialPort.Write(modeUnsetCode)
+				serialPort.Write(smartparallel.TransmitEnd)
+			} else {
+				verbosePrintln("Could not clear print mode")
+			}
 		}
 		verbosePrintln("Sent ", strconv.Itoa(lineCount), " lines")
 	} // else

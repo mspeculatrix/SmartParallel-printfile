@@ -1,0 +1,23 @@
+for _, line := range lines {
+	lineSent := false
+	for !timedOut && !lineSent {
+		if interfaceIsReady() {
+			timeoutCounter = 0
+			if writeError != nil {
+				log.Fatal("*** ERROR: Write error", writeError)
+			}
+			serialPort.Write(smartparallel.LineEnd)
+			for ctsActiveLevel == ctsPin.Read() {
+				// do nothing - just loop while the CTS line is still
+			}
+			debugPrintln("-- CTS went offline")
+		} else {
+			timeoutCounter++
+			if timeoutCounter == timeoutLimit {
+				timedOut = true
+			} else {
+				time.Sleep(sendTimeoutDelay)
+			}
+		}
+	}
+} // for line...
